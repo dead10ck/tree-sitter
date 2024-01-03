@@ -42,6 +42,7 @@ pub(crate) struct MetadataParams {
     pub is_string: bool,
     pub is_active: bool,
     pub is_main_token: bool,
+    pub is_immediate: bool,
     pub alias: Option<Alias>,
     pub field_name: Option<String>,
 }
@@ -103,6 +104,13 @@ impl Rule {
         add_metadata(content, |params| {
             params.is_token = true;
             params.is_main_token = true;
+            params.is_immediate = true;
+        })
+    }
+
+    pub fn immediate(content: Rule) -> Self {
+        add_metadata(content, |params| {
+            params.is_immediate = true;
         })
     }
 

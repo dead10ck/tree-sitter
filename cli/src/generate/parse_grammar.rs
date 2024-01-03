@@ -62,6 +62,9 @@ enum RuleJSON {
     IMMEDIATE_TOKEN {
         content: Box<RuleJSON>,
     },
+    IMMEDIATE {
+        content: Box<RuleJSON>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -179,6 +182,7 @@ fn parse_rule(json: RuleJSON) -> Rule {
         }
         RuleJSON::TOKEN { content } => Rule::token(parse_rule(*content)),
         RuleJSON::IMMEDIATE_TOKEN { content } => Rule::immediate_token(parse_rule(*content)),
+        RuleJSON::IMMEDIATE { content } => Rule::immediate(parse_rule(*content)),
     }
 }
 

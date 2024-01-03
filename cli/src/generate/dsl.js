@@ -170,6 +170,13 @@ token.immediate = function(value) {
   };
 }
 
+immediate = function(value) {
+  return {
+    type: "IMMEDIATE",
+    content: normalize(value)
+  };
+}
+
 function normalize(value) {
   if (typeof value == "undefined")
     throw new Error("Undefined symbol");

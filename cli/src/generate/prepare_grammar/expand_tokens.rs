@@ -101,8 +101,8 @@ pub(crate) fn expand_tokens(mut grammar: ExtractedLexicalGrammar) -> Result<Lexi
 
     let mut variables = Vec::new();
     for (i, variable) in grammar.variables.into_iter().enumerate() {
-        let is_immediate_token = match &variable.rule {
-            Rule::Metadata { params, .. } => params.is_main_token,
+        let is_immediate = match &variable.rule {
+            Rule::Metadata { params, .. } => params.is_immediate,
             _ => false,
         };
 
@@ -116,7 +116,7 @@ pub(crate) fn expand_tokens(mut grammar: ExtractedLexicalGrammar) -> Result<Lexi
             .expand_rule(&variable.rule, last_state_id)
             .with_context(|| format!("Error processing rule {}", variable.name))?;
 
-        if !is_immediate_token {
+        if !is_immediate {
             builder.is_sep = true;
             let last_state_id = builder.nfa.last_state_id();
             builder.expand_rule(&separator_rule, last_state_id)?;

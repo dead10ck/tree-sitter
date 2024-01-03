@@ -3,6 +3,7 @@ type BlankRule = { type: 'BLANK' };
 type ChoiceRule = { type: 'CHOICE'; members: Rule[] };
 type FieldRule = { type: 'FIELD'; name: string; content: Rule };
 type ImmediateTokenRule = { type: 'IMMEDIATE_TOKEN'; content: Rule };
+type ImmediateRule = { type: 'IMMEDIATE'; content: Rule };
 type PatternRule = { type: 'PATTERN'; value: string };
 type PrecDynamicRule = { type: 'PREC_DYNAMIC'; content: Rule; value: number };
 type PrecLeftRule = { type: 'PREC_LEFT'; content: Rule; value: number };
@@ -21,6 +22,7 @@ type Rule =
   | ChoiceRule
   | FieldRule
   | ImmediateTokenRule
+  | ImmediateRule
   | PatternRule
   | PrecDynamicRule
   | PrecLeftRule
@@ -327,6 +329,14 @@ declare function seq(...rules: RuleOrLiteral[]): SeqRule;
  * @param name name of the target rule
  */
 declare function sym<Name extends string>(name: Name): SymbolRule<Name>;
+
+/**
+ * Marks the given rule as producing an immediate token, meaning `extras`
+ * are not skipped implicitly.
+ *
+ * @param name name of the target rule
+ */
+declare function immediate<Name extends string>(name: Name): SymbolRule<Name>;
 
 /**
  * Marks the given rule as producing only a single token. Tree-sitter's
