@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/data/data/com.termux/files/usr/bin/env bash
 
 set -e
 
@@ -56,6 +56,9 @@ while getopts "adDghl:e:s:i:" option; do
       ;;
     e)
       export TREE_SITTER_EXAMPLE=${OPTARG}
+      ;;
+    l)
+      export TREE_SITTER_LANGUAGE=${OPTARG}
       ;;
     s)
       export TREE_SITTER_SEED=${OPTARG}

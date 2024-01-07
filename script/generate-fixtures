@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/data/data/com.termux/files/usr/bin/env bash
 
 set -e
 
@@ -9,7 +9,7 @@ if [ "$CI" == true ]; then
   tree_sitter="$TREE_SITTER"
 else
   cargo build --release
-  tree_sitter=${root_dir}/target/release/tree-sitter
+  tree_sitter=${root_dir}/target/aarch64-linux-android/release/tree-sitter
 fi
 
 filter_grammar_name=$1

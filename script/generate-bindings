@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
 
 output_path=lib/binding_rust/bindings.rs
 header_path='lib/include/tree_sitter/api.h'

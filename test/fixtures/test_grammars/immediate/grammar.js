@@ -7,37 +7,71 @@ module.exports = grammar({
   extras: (_) => [/\s/],
 
   rules: {
-    program: ($) =>
-      seq($._expression, repeat(seq(/\s/, optional($._expression)))),
+    program: ($) => repeat(seq($._expression, immediate($._terminator))),
 
     _expression: ($) => choice($.num, $.num_seq),
 
     num: (_) => /\d+/,
 
-    // ..1..5..20..25..100..
     num_seq: ($) =>
       choice(
-        // ..10
-        $._left_open,
-
-        // 1..10
-        // ..1..10
-        // ..1..10..
-        // 1..10..
         seq(
-          choice($.num, $._left_open),
-          repeat1(immediate($._num_seq_tail)),
-          optional(immediate($.inf)),
+          $.num,
+          choice(
+            // 1.
+            // 1..
+            immediate($._end),
+
+            // 1.10
+            // 1.10.
+            seq(
+              repeat1(immediate($._num_seq_tail)),
+              optional(immediate($._end)),
+            ),
+
+            // 1.10..
+            seq(repeat(immediate($._num_seq_tail)), immediate($._end)),
+          ),
         ),
 
-        // 1..
-        $._right_open,
+        seq(
+          // .1
+          // ..1
+          choice($._left_open, $._num_seq_tail),
+
+          optional(
+            choice(
+              // .1.
+              // .1..
+              // ..1.
+              // ..1..
+              // .1.10.
+              // ..1.10.
+              // ..1.10..
+              seq(repeat(immediate($._num_seq_tail)), immediate($._end)),
+
+              // .1.10
+              // .1.10.
+              // .1.10..
+              // ..1.10
+              // ..1.10.
+              // ..1.10..
+              seq(
+                repeat1(immediate($._num_seq_tail)),
+                optional(immediate($._end)),
+              ),
+            ),
+          ),
+        ),
       ),
 
     inf: (_) => "..",
+    _sep: (_) => ".",
+    _end: ($) => choice($._sep, $.inf),
+    _terminator: (_) => /\n/,
 
     _left_open: ($) => seq($.inf, immediate($.num)),
-    _num_seq_tail: ($) => seq("..", immediate($.num)),
+    _num_seq_tail: ($) => seq($._sep, immediate($.num)),
     _right_open: ($) => seq($.num, immediate($.inf)),
   },
 });

@@ -114,6 +114,13 @@ impl Rule {
         })
     }
 
+    pub fn is_immediate(&self) -> bool {
+        match self {
+            Rule::Metadata { params, .. } => params.is_immediate,
+            _ => false,
+        }
+    }
+
     pub fn prec(value: Precedence, content: Rule) -> Self {
         add_metadata(content, |params| {
             params.precedence = value;

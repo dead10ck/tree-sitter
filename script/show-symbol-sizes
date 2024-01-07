@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/data/data/com.termux/files/usr/bin/env node
 
 const {statSync} = require('fs');
 const {execFileSync} = require('child_process');

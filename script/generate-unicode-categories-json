@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/data/data/com.termux/files/usr/bin/env node
 
 // This script generates a JSON file that is used by the CLI to handle unicode property escapes.
 

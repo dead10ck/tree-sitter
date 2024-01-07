@@ -101,22 +101,18 @@ pub(crate) fn expand_tokens(mut grammar: ExtractedLexicalGrammar) -> Result<Lexi
 
     let mut variables = Vec::new();
     for (i, variable) in grammar.variables.into_iter().enumerate() {
-        let is_immediate = match &variable.rule {
-            Rule::Metadata { params, .. } => params.is_immediate,
-            _ => false,
-        };
-
         builder.is_sep = false;
         builder.nfa.states.push(NfaState::Accept {
             variable_index: i,
             precedence: get_completion_precedence(&variable.rule),
         });
+
         let last_state_id = builder.nfa.last_state_id();
         builder
             .expand_rule(&variable.rule, last_state_id)
             .with_context(|| format!("Error processing rule {}", variable.name))?;
 
-        if !is_immediate {
+        if !variable.rule.is_immediate() {
             builder.is_sep = true;
             let last_state_id = builder.nfa.last_state_id();
             builder.expand_rule(&separator_rule, last_state_id)?;
@@ -154,28 +150,53 @@ impl NfaBuilder {
             Rule::Choice(elements) => {
                 let mut alternative_state_ids = Vec::new();
                 for element in elements {
+                    let immediate_rule = if rule.is_immediate() {
+                        Some(Rule::immediate(element.clone()))
+                    } else {
+                        None
+                    };
+
+                    let element = immediate_rule.as_ref().unwrap_or(element);
+
+                    // let immediate rules trickle down to every choice
                     if self.expand_rule(element, next_state_id)? {
                         alternative_state_ids.push(self.nfa.last_state_id());
                     } else {
                         alternative_state_ids.push(next_state_id);
                     }
                 }
+
                 alternative_state_ids.sort_unstable();
                 alternative_state_ids.dedup();
                 alternative_state_ids.retain(|i| *i != self.nfa.last_state_id());
+
                 for alternative_state_id in alternative_state_ids {
                     self.push_split(alternative_state_id);
                 }
+
                 Ok(true)
             }
             Rule::Seq(elements) => {
                 let mut result = false;
-                for element in elements.into_iter().rev() {
+
+                for (i, element) in elements.iter().rev().enumerate() {
+                    // in a sequence, only the first child rule should inherit
+                    // the immediacy of the parent
+                    let immediate_rule = if i == 0 && rule.is_immediate() {
+                        Some(Rule::immediate(element.clone()))
+                    } else {
+                        None
+                    };
+
+                    let element = immediate_rule.as_ref().unwrap_or(element);
+
                     if self.expand_rule(element, next_state_id)? {
                         result = true;
                     }
+
                     next_state_id = self.nfa.last_state_id();
                 }
+
                 Ok(result)
             }
             Rule::Repeat(rule) => {
