@@ -47,6 +47,15 @@ pub(crate) struct MetadataParams {
     pub field_name: Option<String>,
 }
 
+impl MetadataParams {
+    pub fn default_immediate() -> Self {
+        MetadataParams {
+            is_immediate: true,
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct Symbol {
     pub kind: SymbolType,

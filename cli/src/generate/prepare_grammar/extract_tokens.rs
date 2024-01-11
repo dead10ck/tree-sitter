@@ -15,12 +15,12 @@ pub(super) fn extract_tokens(
         extracted_usage_counts: Vec::new(),
     };
 
-    for mut variable in grammar.variables.iter_mut() {
-        extractor.extract_tokens_in_variable(&mut variable);
+    for variable in grammar.variables.iter_mut() {
+        extractor.extract_tokens_in_variable(variable);
     }
 
-    for mut variable in grammar.external_tokens.iter_mut() {
-        extractor.extract_tokens_in_variable(&mut variable);
+    for variable in grammar.external_tokens.iter_mut() {
+        extractor.extract_tokens_in_variable(variable);
     }
 
     let mut lexical_variables = Vec::with_capacity(extractor.extracted_variables.len());
@@ -91,15 +91,14 @@ pub(super) fn extract_tokens(
 
     let mut separators = Vec::new();
     let mut extra_symbols = Vec::new();
+
     for rule in grammar.extra_symbols {
         if let Rule::Symbol(symbol) = rule {
             extra_symbols.push(symbol_replacer.replace_symbol(symbol));
+        } else if let Some(index) = lexical_variables.iter().position(|v| v.rule == rule) {
+            extra_symbols.push(Symbol::terminal(index));
         } else {
-            if let Some(index) = lexical_variables.iter().position(|v| v.rule == rule) {
-                extra_symbols.push(Symbol::terminal(index));
-            } else {
-                separators.push(rule);
-            }
+            separators.push(rule);
         }
     }
 
@@ -186,6 +185,10 @@ impl TokenExtractor {
     }
 
     fn extract_tokens_in_rule(&mut self, input: &Rule) -> Rule {
+        if input.is_immediate() {
+            println!("rule: {:?}, immediate: {}", input, input.is_immediate());
+        }
+
         match input {
             Rule::String(name) => self.extract_token(input, Some(name)).into(),
             Rule::Pattern(..) => self.extract_token(input, None).into(),
@@ -199,7 +202,9 @@ impl TokenExtractor {
                         string_value = Some(value);
                     }
 
-                    let rule_to_extract = if params == MetadataParams::default() {
+                    let rule_to_extract = if params == MetadataParams::default()
+                        || params == MetadataParams::default_immediate()
+                    {
                         rule.as_ref()
                     } else {
                         input
@@ -209,7 +214,7 @@ impl TokenExtractor {
                 } else {
                     Rule::Metadata {
                         params: params.clone(),
-                        rule: Box::new(self.extract_tokens_in_rule(&rule)),
+                        rule: Box::new(self.extract_tokens_in_rule(rule)),
                     }
                 }
             }
@@ -217,13 +222,33 @@ impl TokenExtractor {
             Rule::Seq(elements) => Rule::Seq(
                 elements
                     .iter()
-                    .map(|e| self.extract_tokens_in_rule(e))
+                    .enumerate()
+                    .map(|(i, elt)| {
+                        // for an immediate sequence, only the first rule must
+                        // be immediate
+                        let immediate_elt = if i == 0 && input.is_immediate() {
+                            Some(Rule::immediate(elt.clone()))
+                        } else {
+                            None
+                        };
+
+                        self.extract_tokens_in_rule(immediate_elt.as_ref().unwrap_or(elt))
+                    })
                     .collect(),
             ),
             Rule::Choice(elements) => Rule::Choice(
                 elements
                     .iter()
-                    .map(|e| self.extract_tokens_in_rule(e))
+                    .map(|elt| {
+                        // apply immediate to all choices
+                        let immediate_elt = if input.is_immediate() {
+                            Some(Rule::immediate(elt.clone()))
+                        } else {
+                            None
+                        };
+
+                        self.extract_tokens_in_rule(immediate_elt.as_ref().unwrap_or(elt))
+                    })
                     .collect(),
             ),
             _ => input.clone(),

@@ -112,6 +112,12 @@ pub(crate) fn expand_tokens(mut grammar: ExtractedLexicalGrammar) -> Result<Lexi
             .expand_rule(&variable.rule, last_state_id)
             .with_context(|| format!("Error processing rule {}", variable.name))?;
 
+        // println!(
+        //     "rule: {:?}, immediate: {}",
+        //     variable.rule,
+        //     variable.rule.is_immediate()
+        // );
+
         if !variable.rule.is_immediate() {
             builder.is_sep = true;
             let last_state_id = builder.nfa.last_state_id();
