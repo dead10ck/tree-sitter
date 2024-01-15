@@ -1,6 +1,6 @@
 use super::ExtractedSyntaxGrammar;
 use crate::generate::grammars::{Variable, VariableType};
-use crate::generate::rules::{Rule, Symbol};
+use crate::generate::rules::{Rule, RuleType, Symbol};
 use std::collections::HashMap;
 use std::mem;
 
@@ -17,82 +17,101 @@ impl Expander {
         self.variable_name.clear();
         self.variable_name.push_str(&variable.name);
         self.repeat_count_in_variable = 0;
-        let mut rule = Rule::Blank;
+        let mut rule = Rule::blank();
         mem::swap(&mut rule, &mut variable.rule);
 
         // In the special case of a hidden variable with a repetition at its top level,
         // convert that rule itself into a binary tree structure instead of introducing
         // another auxiliary rule.
-        if let (VariableType::Hidden, Rule::Repeat(repeated_content)) = (variable.kind, &rule) {
-            let inner_rule = self.expand_rule(&repeated_content);
-            variable.rule = self.wrap_rule_in_binary_tree(Symbol::non_terminal(index), inner_rule);
-            variable.kind = VariableType::Auxiliary;
-            return true;
+        match (variable.kind, rule) {
+            (
+                VariableType::Hidden,
+                Rule {
+                    kind: RuleType::Repeat(repeated_content),
+                    ..
+                },
+            ) => {
+                let inner_rule = self.expand_rule(*repeated_content);
+                variable.rule =
+                    self.wrap_rule_in_binary_tree(Symbol::non_terminal(index), inner_rule);
+                variable.kind = VariableType::Auxiliary;
+                true
+            }
+            (_, rule) => {
+                variable.rule = self.expand_rule(rule);
+                false
+            }
         }
-
-        variable.rule = self.expand_rule(&rule);
-        false
     }
 
-    fn expand_rule(&mut self, rule: &Rule) -> Rule {
-        match rule {
+    fn expand_rule<R: Into<Rule>>(&mut self, rule: R) -> Rule {
+        let rule = rule.into();
+
+        let kind = match rule.kind {
             // For choices, sequences, and metadata, descend into the child rules,
             // replacing any nested repetitions.
-            Rule::Choice(elements) => Rule::Choice(
+            RuleType::Choice(elements) => RuleType::Choice(
                 elements
-                    .iter()
+                    .into_iter()
                     .map(|element| self.expand_rule(element))
                     .collect(),
             ),
 
-            Rule::Seq(elements) => Rule::Seq(
+            RuleType::Seq(elements) => RuleType::Seq(
                 elements
-                    .iter()
+                    .into_iter()
                     .map(|element| self.expand_rule(element))
                     .collect(),
             ),
-
-            Rule::Metadata { rule, params } => Rule::Metadata {
-                rule: Box::new(self.expand_rule(rule)),
-                params: params.clone(),
-            },
 
             // For repetitions, introduce an auxiliary rule that contains the the
             // repeated content, but can also contain a recursive binary tree structure.
-            Rule::Repeat(content) => {
-                let inner_rule = self.expand_rule(content);
+            RuleType::Repeat(content) => {
+                let inner_rule = self.expand_rule(&*content);
 
                 if let Some(existing_symbol) = self.existing_repeats.get(&inner_rule) {
-                    return Rule::Symbol(*existing_symbol);
+                    RuleType::Symbol(*existing_symbol)
+                } else {
+                    self.repeat_count_in_variable += 1;
+
+                    let rule_name = format!(
+                        "{}_repeat{}",
+                        self.variable_name, self.repeat_count_in_variable
+                    );
+
+                    let repeat_symbol = Symbol::non_terminal(
+                        self.preceding_symbol_count + self.auxiliary_variables.len(),
+                    );
+
+                    self.existing_repeats
+                        .insert(inner_rule.clone(), repeat_symbol);
+
+                    self.auxiliary_variables.push(Variable {
+                        name: rule_name,
+                        kind: VariableType::Auxiliary,
+                        rule: self.wrap_rule_in_binary_tree(repeat_symbol, inner_rule),
+                    });
+
+                    RuleType::Symbol(repeat_symbol)
                 }
-
-                self.repeat_count_in_variable += 1;
-                let rule_name = format!(
-                    "{}_repeat{}",
-                    self.variable_name, self.repeat_count_in_variable
-                );
-                let repeat_symbol = Symbol::non_terminal(
-                    self.preceding_symbol_count + self.auxiliary_variables.len(),
-                );
-                self.existing_repeats
-                    .insert(inner_rule.clone(), repeat_symbol);
-                self.auxiliary_variables.push(Variable {
-                    name: rule_name,
-                    kind: VariableType::Auxiliary,
-                    rule: self.wrap_rule_in_binary_tree(repeat_symbol, inner_rule),
-                });
-
-                Rule::Symbol(repeat_symbol)
             }
 
             // For primitive rules, don't change anything.
-            _ => rule.clone(),
+            kind => kind,
+        };
+
+        Rule {
+            kind,
+            params: rule.params,
         }
     }
 
     fn wrap_rule_in_binary_tree(&self, symbol: Symbol, rule: Rule) -> Rule {
         Rule::choice(vec![
-            Rule::Seq(vec![Rule::Symbol(symbol), Rule::Symbol(symbol)]),
+            Rule::seq(vec![
+                RuleType::Symbol(symbol).into(),
+                RuleType::Symbol(symbol).into(),
+            ]),
             rule,
         ])
     }
@@ -122,6 +141,7 @@ pub(super) fn expand_repeats(mut grammar: ExtractedSyntaxGrammar) -> ExtractedSy
     grammar
         .variables
         .extend(expander.auxiliary_variables.into_iter());
+
     grammar
 }
 

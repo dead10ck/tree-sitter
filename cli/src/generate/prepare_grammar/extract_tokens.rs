@@ -1,6 +1,6 @@
 use super::{ExtractedLexicalGrammar, ExtractedSyntaxGrammar, InternedGrammar};
 use crate::generate::grammars::{ExternalToken, Variable, VariableType};
-use crate::generate::rules::{MetadataParams, Rule, Symbol, SymbolType};
+use crate::generate::rules::{Rule, RuleType, Symbol, SymbolType};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::mem;
@@ -43,10 +43,10 @@ pub(super) fn extract_tokens(
         replacements: HashMap::new(),
     };
     for (i, variable) in grammar.variables.into_iter().enumerate() {
-        if let Rule::Symbol(Symbol {
+        if let RuleType::Symbol(Symbol {
             kind: SymbolType::Terminal,
             index,
-        }) = variable.rule
+        }) = variable.rule.kind
         {
             if i > 0 && extractor.extracted_usage_counts[index] == 1 {
                 let lexical_variable = &mut lexical_variables[index];
@@ -60,7 +60,7 @@ pub(super) fn extract_tokens(
     }
 
     for variable in variables.iter_mut() {
-        variable.rule = symbol_replacer.replace_symbols_in_rule(&variable.rule);
+        variable.rule = symbol_replacer.replace_symbols_in_rule(variable.rule.clone());
     }
 
     let expected_conflicts = grammar
@@ -93,7 +93,7 @@ pub(super) fn extract_tokens(
     let mut extra_symbols = Vec::new();
 
     for rule in grammar.extra_symbols {
-        if let Rule::Symbol(symbol) = rule {
+        if let RuleType::Symbol(symbol) = rule.kind {
             extra_symbols.push(symbol_replacer.replace_symbol(symbol));
         } else if let Some(index) = lexical_variables.iter().position(|v| v.rule == rule) {
             extra_symbols.push(Symbol::terminal(index));
@@ -104,8 +104,8 @@ pub(super) fn extract_tokens(
 
     let mut external_tokens = Vec::new();
     for external_token in grammar.external_tokens {
-        let rule = symbol_replacer.replace_symbols_in_rule(&external_token.rule);
-        if let Rule::Symbol(symbol) = rule {
+        let rule = symbol_replacer.replace_symbols_in_rule(external_token.rule);
+        if let RuleType::Symbol(symbol) = rule.kind {
             if symbol.is_non_terminal() {
                 return Err(anyhow!(
                     "Rule '{}' cannot be used as both an external token and a non-terminal rule",
@@ -179,96 +179,90 @@ impl TokenExtractor {
         self.current_variable_name.clear();
         self.current_variable_name.push_str(&variable.name);
         self.current_variable_token_count = 0;
-        let mut rule = Rule::Blank;
+        let mut rule = Rule::blank();
         mem::swap(&mut rule, &mut variable.rule);
-        variable.rule = self.extract_tokens_in_rule(&rule);
+        variable.rule = self.extract_tokens_in_rule(rule);
     }
 
-    fn extract_tokens_in_rule(&mut self, input: &Rule) -> Rule {
-        if input.is_immediate() {
-            println!("rule: {:?}, immediate: {}", input, input.is_immediate());
+    fn extract_tokens_in_rule(&mut self, input: Rule) -> Rule {
+        let is_immediate = input.is_immediate();
+
+        if is_immediate {
+            println!("rule: {:?}", input);
         }
 
-        match input {
-            Rule::String(name) => self.extract_token(input, Some(name)).into(),
-            Rule::Pattern(..) => self.extract_token(input, None).into(),
-            Rule::Metadata { params, rule } => {
-                if params.is_token {
-                    let mut params = params.clone();
-                    params.is_token = false;
+        if input.params.is_token {
+            return self.extract_token(input).into();
+        }
 
-                    let mut string_value = None;
-                    if let Rule::String(value) = rule.as_ref() {
-                        string_value = Some(value);
-                    }
-
-                    let rule_to_extract = if params == MetadataParams::default()
-                        || params == MetadataParams::default_immediate()
-                    {
-                        rule.as_ref()
-                    } else {
-                        input
-                    };
-
-                    self.extract_token(rule_to_extract, string_value).into()
-                } else {
-                    Rule::Metadata {
-                        params: params.clone(),
-                        rule: Box::new(self.extract_tokens_in_rule(rule)),
-                    }
-                }
+        let kind = match input.kind {
+            RuleType::String(_) | RuleType::Pattern(..) => {
+                RuleType::Symbol(self.extract_token(input.clone()))
             }
-            Rule::Repeat(content) => Rule::Repeat(Box::new(self.extract_tokens_in_rule(content))),
-            Rule::Seq(elements) => Rule::Seq(
+            RuleType::Repeat(content) => {
+                RuleType::Repeat(Box::new(self.extract_tokens_in_rule(*content)))
+            }
+            RuleType::Seq(elements) => RuleType::Seq(
                 elements
-                    .iter()
+                    .into_iter()
                     .enumerate()
                     .map(|(i, elt)| {
                         // for an immediate sequence, only the first rule must
                         // be immediate
-                        let immediate_elt = if i == 0 && input.is_immediate() {
-                            Some(Rule::immediate(elt.clone()))
+                        let elt = if i == 0 && is_immediate {
+                            Rule::immediate(elt)
                         } else {
-                            None
+                            elt
                         };
 
-                        self.extract_tokens_in_rule(immediate_elt.as_ref().unwrap_or(elt))
+                        self.extract_tokens_in_rule(elt)
                     })
                     .collect(),
             ),
-            Rule::Choice(elements) => Rule::Choice(
+            RuleType::Choice(elements) => RuleType::Choice(
                 elements
-                    .iter()
+                    .into_iter()
                     .map(|elt| {
                         // apply immediate to all choices
-                        let immediate_elt = if input.is_immediate() {
-                            Some(Rule::immediate(elt.clone()))
+                        let elt = if is_immediate {
+                            Rule::immediate(elt)
                         } else {
-                            None
+                            elt
                         };
 
-                        self.extract_tokens_in_rule(immediate_elt.as_ref().unwrap_or(elt))
+                        self.extract_tokens_in_rule(elt)
                     })
                     .collect(),
             ),
-            _ => input.clone(),
+            kind => kind,
+        };
+
+        Rule {
+            kind,
+            params: input.params,
         }
     }
 
-    fn extract_token(&mut self, rule: &Rule, string_value: Option<&String>) -> Symbol {
+    fn extract_token(&mut self, rule: Rule) -> Symbol {
         for (i, variable) in self.extracted_variables.iter_mut().enumerate() {
-            if variable.rule == *rule {
+            if variable.rule == rule {
                 self.extracted_usage_counts[i] += 1;
                 return Symbol::terminal(i);
             }
         }
 
+        let string_value = match &rule.kind {
+            RuleType::String(value) => Some(value),
+            _ => None,
+        };
+
         let index = self.extracted_variables.len();
+
         let variable = if let Some(string_value) = string_value {
             Variable {
                 name: string_value.clone(),
                 kind: VariableType::Anonymous,
-                rule: rule.clone(),
+                rule,
             }
         } else {
             self.current_variable_token_count += 1;
@@ -278,7 +272,7 @@ impl TokenExtractor {
                     &self.current_variable_name, self.current_variable_token_count
                 ),
                 kind: VariableType::Auxiliary,
-                rule: rule.clone(),
+                rule,
             }
         };
 
@@ -289,27 +283,30 @@ impl TokenExtractor {
 }
 
 impl SymbolReplacer {
-    fn replace_symbols_in_rule(&mut self, rule: &Rule) -> Rule {
-        match rule {
-            Rule::Symbol(symbol) => self.replace_symbol(*symbol).into(),
-            Rule::Choice(elements) => Rule::Choice(
+    fn replace_symbols_in_rule(&mut self, rule: Rule) -> Rule {
+        let kind = match rule.kind {
+            RuleType::Symbol(symbol) => self.replace_symbol(symbol).into(),
+            RuleType::Choice(elements) => RuleType::Choice(
                 elements
-                    .iter()
+                    .into_iter()
                     .map(|e| self.replace_symbols_in_rule(e))
                     .collect(),
             ),
-            Rule::Seq(elements) => Rule::Seq(
+            RuleType::Seq(elements) => RuleType::Seq(
                 elements
-                    .iter()
+                    .into_iter()
                     .map(|e| self.replace_symbols_in_rule(e))
                     .collect(),
             ),
-            Rule::Repeat(content) => Rule::Repeat(Box::new(self.replace_symbols_in_rule(content))),
-            Rule::Metadata { rule, params } => Rule::Metadata {
-                params: params.clone(),
-                rule: Box::new(self.replace_symbols_in_rule(rule)),
-            },
-            _ => rule.clone(),
+            RuleType::Repeat(content) => {
+                RuleType::Repeat(Box::new(self.replace_symbols_in_rule(*content)))
+            }
+            kind => kind,
+        };
+
+        Rule {
+            kind,
+            params: rule.params,
         }
     }
 
@@ -329,7 +326,7 @@ impl SymbolReplacer {
             }
         }
 
-        return Symbol::non_terminal(adjusted_index);
+        Symbol::non_terminal(adjusted_index)
     }
 }
 
@@ -360,7 +357,7 @@ mod test {
             Variable::named("rule_2", Rule::pattern("b", "")),
             Variable::named(
                 "rule_3",
-                Rule::seq(vec![Rule::non_terminal(2), Rule::Blank]),
+                Rule::seq(vec![Rule::non_terminal(2), Rule::blank()]),
             ),
         ]))
         .unwrap();
@@ -394,7 +391,7 @@ mod test {
                 Variable::named("rule_2", Rule::terminal(1)),
                 Variable::named(
                     "rule_3",
-                    Rule::seq(vec![Rule::non_terminal(1), Rule::Blank,])
+                    Rule::seq(vec![Rule::non_terminal(1), Rule::blank(),])
                 ),
             ]
         );

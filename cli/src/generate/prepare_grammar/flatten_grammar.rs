@@ -2,7 +2,7 @@ use super::ExtractedSyntaxGrammar;
 use crate::generate::grammars::{
     Production, ProductionStep, SyntaxGrammar, SyntaxVariable, Variable,
 };
-use crate::generate::rules::{Alias, Associativity, Precedence, Rule, Symbol};
+use crate::generate::rules::{Alias, Associativity, Precedence, Rule, RuleType, Symbol};
 use anyhow::{anyhow, Result};
 
 struct RuleFlattener {
@@ -33,76 +33,48 @@ impl RuleFlattener {
     }
 
     fn apply(&mut self, rule: Rule, at_end: bool) -> bool {
-        match rule {
-            Rule::Seq(members) => {
+        let params = rule.params;
+
+        let mut has_precedence = false;
+        if !params.precedence.is_none() {
+            has_precedence = true;
+            self.precedence_stack.push(params.precedence);
+        }
+
+        let mut has_associativity = false;
+        if let Some(associativity) = params.associativity {
+            has_associativity = true;
+            self.associativity_stack.push(associativity);
+        }
+
+        let mut has_alias = false;
+        if let Some(alias) = params.alias {
+            has_alias = true;
+            self.alias_stack.push(alias);
+        }
+
+        let mut has_field_name = false;
+        if let Some(field_name) = params.field_name {
+            has_field_name = true;
+            self.field_name_stack.push(field_name);
+        }
+
+        if params.dynamic_precedence.abs() > self.production.dynamic_precedence.abs() {
+            self.production.dynamic_precedence = params.dynamic_precedence;
+        }
+
+        let did_push = match rule.kind {
+            RuleType::Seq(members) => {
                 let mut result = false;
                 let last_index = members.len() - 1;
+
                 for (i, member) in members.into_iter().enumerate() {
                     result |= self.apply(member, i == last_index && at_end);
                 }
+
                 result
             }
-            Rule::Metadata { rule, params } => {
-                let mut has_precedence = false;
-                if !params.precedence.is_none() {
-                    has_precedence = true;
-                    self.precedence_stack.push(params.precedence);
-                }
-
-                let mut has_associativity = false;
-                if let Some(associativity) = params.associativity {
-                    has_associativity = true;
-                    self.associativity_stack.push(associativity);
-                }
-
-                let mut has_alias = false;
-                if let Some(alias) = params.alias {
-                    has_alias = true;
-                    self.alias_stack.push(alias);
-                }
-
-                let mut has_field_name = false;
-                if let Some(field_name) = params.field_name {
-                    has_field_name = true;
-                    self.field_name_stack.push(field_name);
-                }
-
-                if params.dynamic_precedence.abs() > self.production.dynamic_precedence.abs() {
-                    self.production.dynamic_precedence = params.dynamic_precedence;
-                }
-
-                let did_push = self.apply(*rule, at_end);
-
-                if has_precedence {
-                    self.precedence_stack.pop();
-                    if did_push && !at_end {
-                        self.production.steps.last_mut().unwrap().precedence = self
-                            .precedence_stack
-                            .last()
-                            .cloned()
-                            .unwrap_or(Precedence::None);
-                    }
-                }
-
-                if has_associativity {
-                    self.associativity_stack.pop();
-                    if did_push && !at_end {
-                        self.production.steps.last_mut().unwrap().associativity =
-                            self.associativity_stack.last().cloned();
-                    }
-                }
-
-                if has_alias {
-                    self.alias_stack.pop();
-                }
-
-                if has_field_name {
-                    self.field_name_stack.pop();
-                }
-
-                did_push
-            }
-            Rule::Symbol(symbol) => {
+            RuleType::Symbol(symbol) => {
                 self.production.steps.push(ProductionStep {
                     symbol,
                     precedence: self
@@ -117,43 +89,78 @@ impl RuleFlattener {
                 true
             }
             _ => false,
+        };
+
+        if has_precedence {
+            self.precedence_stack.pop();
+            if did_push && !at_end {
+                self.production.steps.last_mut().unwrap().precedence = self
+                    .precedence_stack
+                    .last()
+                    .cloned()
+                    .unwrap_or(Precedence::None);
+            }
         }
+
+        if has_associativity {
+            self.associativity_stack.pop();
+            if did_push && !at_end {
+                self.production.steps.last_mut().unwrap().associativity =
+                    self.associativity_stack.last().cloned();
+            }
+        }
+
+        if has_alias {
+            self.alias_stack.pop();
+        }
+
+        if has_field_name {
+            self.field_name_stack.pop();
+        }
+
+        did_push
     }
 }
 
 fn extract_choices(rule: Rule) -> Vec<Rule> {
-    match rule {
-        Rule::Seq(elements) => {
-            let mut result = vec![Rule::Blank];
+    let params = rule.params;
+
+    // each top-level rule should inherit the params
+    match rule.kind {
+        RuleType::Seq(elements) => {
+            let mut result = vec![Rule::blank()];
+
             for element in elements {
                 let extraction = extract_choices(element);
                 let mut next_result = Vec::new();
+
                 for entry in result {
                     for extraction_entry in extraction.iter() {
-                        next_result.push(Rule::Seq(vec![entry.clone(), extraction_entry.clone()]));
+                        next_result.push(Rule {
+                            kind: RuleType::Seq(vec![entry.clone(), extraction_entry.clone()]),
+                            params: params.clone(),
+                        });
                     }
                 }
+
                 result = next_result;
             }
+
             result
         }
-        Rule::Choice(elements) => {
+        RuleType::Choice(elements) => {
             let mut result = Vec::new();
+
             for element in elements {
-                for rule in extract_choices(element) {
+                for mut rule in extract_choices(element) {
+                    rule.params = params.clone();
                     result.push(rule);
                 }
             }
+
             result
         }
-        Rule::Metadata { rule, params } => extract_choices(*rule)
-            .into_iter()
-            .map(|rule| Rule::Metadata {
-                rule: Box::new(rule),
-                params: params.clone(),
-            })
-            .collect(),
-        _ => vec![rule],
+        kind => vec![Rule { kind, params }],
     }
 }
 
@@ -389,7 +396,7 @@ mod tests {
                 Rule::field("first-thing".to_string(), Rule::terminal(1)),
                 Rule::terminal(2),
                 Rule::choice(vec![
-                    Rule::Blank,
+                    Rule::blank(),
                     Rule::field("second-thing".to_string(), Rule::terminal(3)),
                 ]),
             ]),

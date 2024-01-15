@@ -63,17 +63,19 @@ pub(crate) struct Symbol {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Rule {
+pub(crate) struct Rule {
+    pub kind: RuleType,
+    pub params: MetadataParams,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum RuleType {
     Blank,
     String(String),
     Pattern(String, String),
     NamedSymbol(String),
     Symbol(Symbol),
     Choice(Vec<Rule>),
-    Metadata {
-        params: MetadataParams,
-        rule: Box<Rule>,
-    },
     Repeat(Box<Rule>),
     Seq(Vec<Rule>),
 }
@@ -90,86 +92,122 @@ pub(crate) struct TokenSet {
     end_of_nonterminal_extra: bool,
 }
 
+impl From<RuleType> for Rule {
+    fn from(kind: RuleType) -> Self {
+        Rule {
+            kind,
+            params: MetadataParams::default(),
+        }
+    }
+}
+
+impl From<&Rule> for Rule {
+    fn from(rule: &Rule) -> Self {
+        rule.clone()
+    }
+}
+
 impl Rule {
-    pub fn field(name: String, content: Rule) -> Self {
-        add_metadata(content, move |params| {
-            params.field_name = Some(name);
-        })
+    pub fn field(name: String, mut rule: Rule) -> Self {
+        rule.params.field_name = Some(name);
+        rule
     }
 
-    pub fn alias(content: Rule, value: String, is_named: bool) -> Self {
-        add_metadata(content, move |params| {
-            params.alias = Some(Alias { is_named, value });
-        })
+    pub fn alias(mut rule: Rule, value: String, is_named: bool) -> Self {
+        rule.params.alias = Some(Alias { is_named, value });
+        rule
     }
 
-    pub fn token(content: Rule) -> Self {
-        add_metadata(content, |params| {
-            params.is_token = true;
-        })
+    pub fn token(mut rule: Rule) -> Self {
+        rule.params.is_token = true;
+        rule
     }
 
-    pub fn immediate_token(content: Rule) -> Self {
-        add_metadata(content, |params| {
-            params.is_token = true;
-            params.is_main_token = true;
-            params.is_immediate = true;
-        })
+    pub fn immediate_token(mut rule: Rule) -> Self {
+        rule.params.is_token = true;
+        rule.params.is_main_token = true;
+        rule.params.is_immediate = true;
+        rule
     }
 
-    pub fn immediate(content: Rule) -> Self {
-        add_metadata(content, |params| {
-            params.is_immediate = true;
-        })
+    pub fn immediate(mut rule: Rule) -> Self {
+        rule.params.is_immediate = true;
+        rule
     }
 
     pub fn is_immediate(&self) -> bool {
-        match self {
-            Rule::Metadata { params, .. } => params.is_immediate,
-            _ => false,
+        self.params.is_immediate
+    }
+
+    pub fn prec(value: Precedence, mut rule: Rule) -> Self {
+        rule.params.precedence = value;
+        rule
+    }
+
+    pub fn prec_left(value: Precedence, mut rule: Rule) -> Self {
+        rule.params.associativity = Some(Associativity::Left);
+        rule.params.precedence = value;
+        rule
+    }
+
+    pub fn prec_right(value: Precedence, mut rule: Rule) -> Self {
+        rule.params.associativity = Some(Associativity::Right);
+        rule.params.precedence = value;
+        rule
+    }
+
+    pub fn prec_dynamic(value: i32, mut rule: Rule) -> Self {
+        rule.params.dynamic_precedence = value;
+        rule
+    }
+
+    pub fn blank() -> Self {
+        Rule {
+            kind: RuleType::Blank,
+            params: Default::default(),
         }
     }
 
-    pub fn prec(value: Precedence, content: Rule) -> Self {
-        add_metadata(content, |params| {
-            params.precedence = value;
-        })
+    pub fn terminal(index: usize) -> Self {
+        RuleType::Symbol(Symbol::terminal(index)).into()
     }
 
-    pub fn prec_left(value: Precedence, content: Rule) -> Self {
-        add_metadata(content, |params| {
-            params.associativity = Some(Associativity::Left);
-            params.precedence = value;
-        })
+    pub fn non_terminal(index: usize) -> Self {
+        RuleType::Symbol(Symbol::non_terminal(index)).into()
     }
 
-    pub fn prec_right(value: Precedence, content: Rule) -> Self {
-        add_metadata(content, |params| {
-            params.associativity = Some(Associativity::Right);
-            params.precedence = value;
-        })
+    pub fn external(index: usize) -> Self {
+        RuleType::Symbol(Symbol::external(index)).into()
     }
 
-    pub fn prec_dynamic(value: i32, content: Rule) -> Self {
-        add_metadata(content, |params| {
-            params.dynamic_precedence = value;
-        })
+    pub fn named<S: ToString>(name: S) -> Self {
+        RuleType::NamedSymbol(name.to_string()).into()
     }
 
-    pub fn repeat(rule: Rule) -> Self {
-        Rule::Repeat(Box::new(rule))
+    pub fn string<S: ToString>(value: S) -> Self {
+        RuleType::String(value.to_string()).into()
+    }
+
+    pub fn pattern<S: ToString>(value: S, flags: S) -> Self {
+        RuleType::Pattern(value.to_string(), flags.to_string()).into()
+    }
+
+    pub fn repeat(mut rule: Rule) -> Self {
+        RuleType::Repeat(Box::new(rule)).into()
     }
 
     pub fn choice(rules: Vec<Rule>) -> Self {
         let mut elements = Vec::with_capacity(rules.len());
+
         for rule in rules {
             choice_helper(&mut elements, rule);
         }
-        Rule::Choice(elements)
+
+        RuleType::Choice(elements).into()
     }
 
     pub fn seq(rules: Vec<Rule>) -> Self {
-        Rule::Seq(rules)
+        RuleType::Seq(rules).into()
     }
 }
 
@@ -186,33 +224,6 @@ impl Alias {
 impl Precedence {
     pub fn is_none(&self) -> bool {
         matches!(self, Precedence::None)
-    }
-}
-
-#[cfg(test)]
-impl Rule {
-    pub fn terminal(index: usize) -> Self {
-        Rule::Symbol(Symbol::terminal(index))
-    }
-
-    pub fn non_terminal(index: usize) -> Self {
-        Rule::Symbol(Symbol::non_terminal(index))
-    }
-
-    pub fn external(index: usize) -> Self {
-        Rule::Symbol(Symbol::external(index))
-    }
-
-    pub fn named(name: &'static str) -> Self {
-        Rule::NamedSymbol(name.to_string())
-    }
-
-    pub fn string(value: &'static str) -> Self {
-        Rule::String(value.to_string())
-    }
-
-    pub fn pattern(value: &'static str, flags: &'static str) -> Self {
-        Rule::Pattern(value.to_string(), flags.to_string())
     }
 }
 
@@ -271,7 +282,13 @@ impl Symbol {
 
 impl From<Symbol> for Rule {
     fn from(symbol: Symbol) -> Self {
-        Rule::Symbol(symbol)
+        RuleType::Symbol(symbol).into()
+    }
+}
+
+impl From<Symbol> for RuleType {
+    fn from(symbol: Symbol) -> Self {
+        RuleType::Symbol(symbol)
     }
 }
 
@@ -385,12 +402,12 @@ impl TokenSet {
                 };
             }
         };
-        if other.index < vec.len() {
-            if vec[other.index] {
-                vec.set(other.index, false);
-                return true;
-            }
+
+        if other.index < vec.len() && vec[other.index] {
+            vec.set(other.index, false);
+            return true;
         }
+
         false
     }
 
@@ -455,26 +472,9 @@ impl FromIterator<Symbol> for TokenSet {
     }
 }
 
-fn add_metadata<T: FnOnce(&mut MetadataParams)>(input: Rule, f: T) -> Rule {
-    match input {
-        Rule::Metadata { rule, mut params } if !params.is_token => {
-            f(&mut params);
-            Rule::Metadata { rule, params }
-        }
-        _ => {
-            let mut params = MetadataParams::default();
-            f(&mut params);
-            Rule::Metadata {
-                rule: Box::new(input),
-                params,
-            }
-        }
-    }
-}
-
 fn choice_helper(result: &mut Vec<Rule>, rule: Rule) {
-    match rule {
-        Rule::Choice(elements) => {
+    match rule.kind {
+        RuleType::Choice(elements) => {
             for element in elements {
                 choice_helper(result, element);
             }

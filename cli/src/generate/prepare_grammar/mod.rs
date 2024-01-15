@@ -6,6 +6,8 @@ mod flatten_grammar;
 mod intern_symbols;
 mod process_inlines;
 
+use crate::generate::rules::RuleType;
+
 pub(crate) use self::expand_tokens::expand_tokens;
 
 use self::expand_repeats::expand_repeats;
@@ -123,25 +125,22 @@ fn validate_precedences(grammar: &InputGrammar) -> Result<()> {
     // Check that no rule contains a named precedence that is not present in
     // any of the `precedences` lists.
     fn validate(rule_name: &str, rule: &Rule, names: &HashSet<&String>) -> Result<()> {
-        match rule {
-            Rule::Repeat(rule) => validate(rule_name, rule, names),
-            Rule::Seq(elements) | Rule::Choice(elements) => elements
+        if let Precedence::Name(n) = &rule.params.precedence {
+            if !names.contains(n) {
+                return Err(anyhow!(
+                    "Undeclared precedence '{}' in rule '{}'",
+                    n,
+                    rule_name
+                ));
+            }
+        }
+
+        match &rule.kind {
+            RuleType::Repeat(rule) => validate(rule_name, &*rule, names),
+            RuleType::Seq(elements) | RuleType::Choice(elements) => elements
                 .iter()
                 .map(|e| validate(rule_name, e, names))
                 .collect(),
-            Rule::Metadata { rule, params } => {
-                if let Precedence::Name(n) = &params.precedence {
-                    if !names.contains(n) {
-                        return Err(anyhow!(
-                            "Undeclared precedence '{}' in rule '{}'",
-                            n,
-                            rule_name
-                        ));
-                    }
-                }
-                validate(rule_name, rule, names)?;
-                Ok(())
-            }
             _ => Ok(()),
         }
     }
@@ -188,18 +187,22 @@ mod tests {
                 Variable {
                     name: "v1".to_string(),
                     kind: VariableType::Named,
-                    rule: Rule::Seq(vec![
+                    rule: RuleType::Seq(vec![
                         Rule::prec_left(Precedence::Name("b".to_string()), Rule::string("w")),
                         Rule::prec(Precedence::Name("c".to_string()), Rule::string("x")),
-                    ]),
+                    ])
+                    .into(),
                 },
                 Variable {
                     name: "v2".to_string(),
                     kind: VariableType::Named,
-                    rule: Rule::repeat(Rule::Choice(vec![
-                        Rule::prec_left(Precedence::Name("omg".to_string()), Rule::string("y")),
-                        Rule::prec(Precedence::Name("c".to_string()), Rule::string("z")),
-                    ])),
+                    rule: Rule::repeat(
+                        RuleType::Choice(vec![
+                            Rule::prec_left(Precedence::Name("omg".to_string()), Rule::string("y")),
+                            Rule::prec(Precedence::Name("c".to_string()), Rule::string("z")),
+                        ])
+                        .into(),
+                    ),
                 },
             ],
             ..Default::default()
@@ -230,18 +233,22 @@ mod tests {
                 Variable {
                     name: "v1".to_string(),
                     kind: VariableType::Named,
-                    rule: Rule::Seq(vec![
+                    rule: RuleType::Seq(vec![
                         Rule::prec_left(Precedence::Name("b".to_string()), Rule::string("w")),
                         Rule::prec(Precedence::Name("c".to_string()), Rule::string("x")),
-                    ]),
+                    ])
+                    .into(),
                 },
                 Variable {
                     name: "v2".to_string(),
                     kind: VariableType::Named,
-                    rule: Rule::repeat(Rule::Choice(vec![
-                        Rule::prec_left(Precedence::Name("a".to_string()), Rule::string("y")),
-                        Rule::prec(Precedence::Name("c".to_string()), Rule::string("z")),
-                    ])),
+                    rule: Rule::repeat(
+                        RuleType::Choice(vec![
+                            Rule::prec_left(Precedence::Name("a".to_string()), Rule::string("y")),
+                            Rule::prec(Precedence::Name("c".to_string()), Rule::string("z")),
+                        ])
+                        .into(),
+                    ),
                 },
             ],
             ..Default::default()

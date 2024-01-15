@@ -1012,7 +1012,7 @@ mod tests {
                     kind: VariableType::Named,
                     rule: Rule::seq(vec![
                         Rule::string("{"),
-                        Rule::choice(vec![Rule::named("v3"), Rule::Blank]),
+                        Rule::choice(vec![Rule::named("v3"), Rule::blank()]),
                         Rule::string("}"),
                     ]),
                 },
@@ -1215,7 +1215,7 @@ mod tests {
                     kind: VariableType::Named,
                     rule: Rule::seq(vec![
                         Rule::choice(vec![
-                            Rule::Blank,
+                            Rule::blank(),
                             Rule::repeat(Rule::field("f1".to_string(), Rule::named("b"))),
                         ]),
                         Rule::repeat(Rule::named("c")),

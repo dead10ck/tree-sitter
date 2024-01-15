@@ -1,5 +1,5 @@
 use super::grammars::{InputGrammar, PrecedenceEntry, Variable, VariableType};
-use super::rules::{Precedence, Rule};
+use super::rules::{Precedence, Rule, RuleType};
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -145,9 +145,9 @@ fn parse_rule(json: RuleJSON) -> Rule {
             value,
             named,
         } => Rule::alias(parse_rule(*content), value, named),
-        RuleJSON::BLANK => Rule::Blank,
-        RuleJSON::STRING { value } => Rule::String(value),
-        RuleJSON::PATTERN { value, flags } => Rule::Pattern(
+        RuleJSON::BLANK => Rule::blank(),
+        RuleJSON::STRING { value } => RuleType::String(value).into(),
+        RuleJSON::PATTERN { value, flags } => Rule::pattern(
             value,
             flags.map_or(String::new(), |f| {
                 f.chars()
@@ -162,13 +162,13 @@ fn parse_rule(json: RuleJSON) -> Rule {
                     .collect()
             }),
         ),
-        RuleJSON::SYMBOL { name } => Rule::NamedSymbol(name),
+        RuleJSON::SYMBOL { name } => Rule::named(name),
         RuleJSON::CHOICE { members } => Rule::choice(members.into_iter().map(parse_rule).collect()),
         RuleJSON::FIELD { content, name } => Rule::field(name, parse_rule(*content)),
         RuleJSON::SEQ { members } => Rule::seq(members.into_iter().map(parse_rule).collect()),
         RuleJSON::REPEAT1 { content } => Rule::repeat(parse_rule(*content)),
         RuleJSON::REPEAT { content } => {
-            Rule::choice(vec![Rule::repeat(parse_rule(*content)), Rule::Blank])
+            Rule::choice(vec![Rule::repeat(parse_rule(*content)), Rule::blank()])
         }
         RuleJSON::PREC { value, content } => Rule::prec(value.into(), parse_rule(*content)),
         RuleJSON::PREC_LEFT { value, content } => {
@@ -228,12 +228,12 @@ mod tests {
                 Variable {
                     name: "file".to_string(),
                     kind: VariableType::Named,
-                    rule: Rule::repeat(Rule::NamedSymbol("statement".to_string()))
+                    rule: Rule::repeat(Rule::named("statement"))
                 },
                 Variable {
                     name: "statement".to_string(),
                     kind: VariableType::Named,
-                    rule: Rule::String("foo".to_string())
+                    rule: Rule::string("foo")
                 },
             ]
         );

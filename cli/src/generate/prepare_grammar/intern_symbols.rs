@@ -1,6 +1,6 @@
 use super::InternedGrammar;
 use crate::generate::grammars::{InputGrammar, Variable, VariableType};
-use crate::generate::rules::{Rule, Symbol};
+use crate::generate::rules::{Rule, RuleType, Symbol};
 use anyhow::{anyhow, Result};
 
 pub(super) fn intern_symbols(grammar: &InputGrammar) -> Result<InternedGrammar> {
@@ -22,7 +22,7 @@ pub(super) fn intern_symbols(grammar: &InputGrammar) -> Result<InternedGrammar> 
     let mut external_tokens = Vec::with_capacity(grammar.external_tokens.len());
     for external_token in grammar.external_tokens.iter() {
         let rule = interner.intern_rule(&external_token)?;
-        let (name, kind) = if let Rule::NamedSymbol(name) = external_token {
+        let (name, kind) = if let RuleType::NamedSymbol(name) = &external_token.kind {
             (name.clone(), variable_type_for_name(&name))
         } else {
             (String::new(), VariableType::Anonymous)
@@ -32,7 +32,7 @@ pub(super) fn intern_symbols(grammar: &InputGrammar) -> Result<InternedGrammar> 
 
     let mut extra_symbols = Vec::with_capacity(grammar.extra_symbols.len());
     for extra_token in grammar.extra_symbols.iter() {
-        extra_symbols.push(interner.intern_rule(extra_token)?);
+        extra_symbols.push(interner.intern_rule(&extra_token)?);
     }
 
     let mut supertype_symbols = Vec::with_capacity(grammar.supertype_symbols.len());
@@ -97,37 +97,37 @@ struct Interner<'a> {
 
 impl<'a> Interner<'a> {
     fn intern_rule(&self, rule: &Rule) -> Result<Rule> {
-        match rule {
-            Rule::Choice(elements) => {
+        let kind = match &rule.kind {
+            RuleType::Choice(elements) => {
                 let mut result = Vec::with_capacity(elements.len());
-                for element in elements {
+                for element in elements.iter() {
                     result.push(self.intern_rule(element)?);
                 }
-                Ok(Rule::Choice(result))
+                RuleType::Choice(result)
             }
-            Rule::Seq(elements) => {
+            RuleType::Seq(elements) => {
                 let mut result = Vec::with_capacity(elements.len());
-                for element in elements {
+                for element in elements.iter() {
                     result.push(self.intern_rule(element)?);
                 }
-                Ok(Rule::Seq(result))
+                RuleType::Seq(result)
             }
-            Rule::Repeat(content) => Ok(Rule::Repeat(Box::new(self.intern_rule(content)?))),
-            Rule::Metadata { rule, params } => Ok(Rule::Metadata {
-                rule: Box::new(self.intern_rule(rule)?),
-                params: params.clone(),
-            }),
-
-            Rule::NamedSymbol(name) => {
+            RuleType::Repeat(content) => RuleType::Repeat(Box::new(self.intern_rule(&*content)?)),
+            RuleType::NamedSymbol(name) => {
                 if let Some(symbol) = self.intern_name(&name) {
-                    Ok(Rule::Symbol(symbol))
+                    RuleType::Symbol(symbol)
                 } else {
-                    Err(anyhow!("Undefined symbol `{}`", name))
+                    return Err(anyhow!("Undefined symbol `{}`", name));
                 }
             }
 
-            _ => Ok(rule.clone()),
-        }
+            rule => rule.clone(),
+        };
+
+        Ok(Rule {
+            kind,
+            params: rule.params.clone(),
+        })
     }
 
     fn intern_name(&self, symbol: &str) -> Option<Symbol> {
@@ -138,7 +138,7 @@ impl<'a> Interner<'a> {
         }
 
         for (i, external_token) in self.grammar.external_tokens.iter().enumerate() {
-            if let Rule::NamedSymbol(name) = external_token {
+            if let RuleType::NamedSymbol(name) = &external_token.kind {
                 if name == symbol {
                     return Some(Symbol::external(i));
                 }

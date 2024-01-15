@@ -1,7 +1,7 @@
 use super::ExtractedLexicalGrammar;
 use crate::generate::grammars::{LexicalGrammar, LexicalVariable};
 use crate::generate::nfa::{CharacterSet, Nfa, NfaState};
-use crate::generate::rules::{Precedence, Rule};
+use crate::generate::rules::{Precedence, Rule, RuleType};
 use anyhow::{anyhow, Context, Result};
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -38,26 +38,26 @@ struct NfaBuilder {
 }
 
 fn get_implicit_precedence(rule: &Rule) -> i32 {
-    match rule {
-        Rule::String(_) => 2,
-        Rule::Metadata { rule, params } => {
-            if params.is_main_token {
-                get_implicit_precedence(rule) + 1
-            } else {
-                get_implicit_precedence(rule)
-            }
-        }
+    let prec = match rule {
+        Rule {
+            kind: RuleType::String(_),
+            ..
+        } => 2,
         _ => 0,
+    };
+
+    if rule.params.is_main_token {
+        prec + 1
+    } else {
+        prec
     }
 }
 
 fn get_completion_precedence(rule: &Rule) -> i32 {
-    if let Rule::Metadata { params, .. } = rule {
-        if let Precedence::Integer(p) = params.precedence {
-            return p;
-        }
+    match rule.params.precedence {
+        Precedence::Integer(p) => p,
+        _ => 0,
     }
-    0
 }
 
 fn preprocess_regex(content: &str) -> String {
@@ -93,10 +93,10 @@ pub(crate) fn expand_tokens(mut grammar: ExtractedLexicalGrammar) -> Result<Lexi
     };
 
     let separator_rule = if grammar.separators.len() > 0 {
-        grammar.separators.push(Rule::Blank);
+        grammar.separators.push(Rule::blank());
         Rule::repeat(Rule::choice(grammar.separators))
     } else {
-        Rule::Blank
+        RuleType::Blank.into()
     };
 
     let mut variables = Vec::new();
@@ -107,9 +107,12 @@ pub(crate) fn expand_tokens(mut grammar: ExtractedLexicalGrammar) -> Result<Lexi
             precedence: get_completion_precedence(&variable.rule),
         });
 
+        let is_immediate = variable.rule.is_immediate();
+        let implicit_precedence = get_implicit_precedence(&variable.rule);
+
         let last_state_id = builder.nfa.last_state_id();
         builder
-            .expand_rule(&variable.rule, last_state_id)
+            .expand_rule(variable.rule, last_state_id)
             .with_context(|| format!("Error processing rule {}", variable.name))?;
 
         // println!(
@@ -118,16 +121,16 @@ pub(crate) fn expand_tokens(mut grammar: ExtractedLexicalGrammar) -> Result<Lexi
         //     variable.rule.is_immediate()
         // );
 
-        if !variable.rule.is_immediate() {
+        if !is_immediate {
             builder.is_sep = true;
             let last_state_id = builder.nfa.last_state_id();
-            builder.expand_rule(&separator_rule, last_state_id)?;
+            builder.expand_rule(separator_rule.clone(), last_state_id)?;
         }
 
         variables.push(LexicalVariable {
             name: variable.name,
             kind: variable.kind,
-            implicit_precedence: get_implicit_precedence(&variable.rule),
+            implicit_precedence,
             start_state: builder.nfa.last_state_id(),
         });
     }
@@ -139,32 +142,36 @@ pub(crate) fn expand_tokens(mut grammar: ExtractedLexicalGrammar) -> Result<Lexi
 }
 
 impl NfaBuilder {
-    fn expand_rule(&mut self, rule: &Rule, mut next_state_id: u32) -> Result<bool> {
-        match rule {
-            Rule::Pattern(s, f) => {
-                let s = preprocess_regex(s);
+    fn expand_rule(&mut self, rule: Rule, mut next_state_id: u32) -> Result<bool> {
+        let is_immediate = rule.is_immediate();
+        let params = rule.params;
+
+        let has_precedence = if let Precedence::Integer(precedence) = params.precedence {
+            self.precedence_stack.push(precedence);
+            true
+        } else {
+            false
+        };
+
+        let result = match rule.kind {
+            RuleType::Pattern(s, f) => {
+                let s = preprocess_regex(&s);
                 let ast = parse::Parser::new().parse(&s)?;
                 self.expand_regex(&ast, next_state_id, f.contains('i'))
             }
-            Rule::String(s) => {
+            RuleType::String(s) => {
                 for c in s.chars().rev() {
                     self.push_advance(CharacterSet::empty().add_char(c), next_state_id);
                     next_state_id = self.nfa.last_state_id();
                 }
                 Ok(s.len() > 0)
             }
-            Rule::Choice(elements) => {
+            RuleType::Choice(elements) => {
                 let mut alternative_state_ids = Vec::new();
-                for element in elements {
-                    let immediate_rule = if rule.is_immediate() {
-                        Some(Rule::immediate(element.clone()))
-                    } else {
-                        None
-                    };
-
-                    let element = immediate_rule.as_ref().unwrap_or(element);
-
+                for mut element in elements.into_iter() {
                     // let immediate rules trickle down to every choice
+                    element.params.is_immediate = is_immediate;
+
                     if self.expand_rule(element, next_state_id)? {
                         alternative_state_ids.push(self.nfa.last_state_id());
                     } else {
@@ -182,19 +189,15 @@ impl NfaBuilder {
 
                 Ok(true)
             }
-            Rule::Seq(elements) => {
+            RuleType::Seq(elements) => {
                 let mut result = false;
 
-                for (i, element) in elements.iter().rev().enumerate() {
+                for (i, mut element) in elements.into_iter().rev().enumerate() {
                     // in a sequence, only the first child rule should inherit
                     // the immediacy of the parent
-                    let immediate_rule = if i == 0 && rule.is_immediate() {
-                        Some(Rule::immediate(element.clone()))
-                    } else {
-                        None
-                    };
-
-                    let element = immediate_rule.as_ref().unwrap_or(element);
+                    if i == 0 {
+                        element.params.is_immediate = is_immediate;
+                    }
 
                     if self.expand_rule(element, next_state_id)? {
                         result = true;
@@ -205,13 +208,15 @@ impl NfaBuilder {
 
                 Ok(result)
             }
-            Rule::Repeat(rule) => {
+            RuleType::Repeat(rule) => {
                 self.nfa.states.push(NfaState::Accept {
                     variable_index: 0,
                     precedence: 0,
                 }); // Placeholder for split
+
                 let split_state_id = self.nfa.last_state_id();
-                if self.expand_rule(rule, split_state_id)? {
+
+                if self.expand_rule(*rule, split_state_id)? {
                     self.nfa.states[split_state_id as usize] =
                         NfaState::Split(self.nfa.last_state_id(), next_state_id);
                     Ok(true)
@@ -219,22 +224,15 @@ impl NfaBuilder {
                     Ok(false)
                 }
             }
-            Rule::Metadata { rule, params } => {
-                let has_precedence = if let Precedence::Integer(precedence) = &params.precedence {
-                    self.precedence_stack.push(*precedence);
-                    true
-                } else {
-                    false
-                };
-                let result = self.expand_rule(rule, next_state_id);
-                if has_precedence {
-                    self.precedence_stack.pop();
-                }
-                result
-            }
-            Rule::Blank => Ok(false),
-            _ => Err(anyhow!("Grammar error: Unexpected rule {:?}", rule)),
+            RuleType::Blank => Ok(false),
+            rule => Err(anyhow!("Grammar error: Unexpected rule {:?}", rule)),
+        };
+
+        if has_precedence {
+            self.precedence_stack.pop();
         }
+
+        result
     }
 
     fn expand_regex(
@@ -798,18 +796,17 @@ mod tests {
             // nested choices within sequences
             Row {
                 rules: vec![Rule::seq(vec![
+                    Rule::blank(),
                     Rule::pattern("[0-9]+", ""),
-                    Rule::choice(vec![
-                        Rule::Blank,
-                        Rule::choice(vec![Rule::seq(vec![
-                            Rule::choice(vec![Rule::string("e"), Rule::string("E")]),
-                            Rule::choice(vec![
-                                Rule::Blank,
-                                Rule::choice(vec![Rule::string("+"), Rule::string("-")]),
-                            ]),
-                            Rule::pattern("[0-9]+", ""),
+                    Rule::choice(vec![Rule::choice(vec![Rule::seq(vec![
+                        Rule::blank(),
+                        Rule::choice(vec![Rule::string("e"), Rule::string("E")]),
+                        Rule::choice(vec![Rule::choice(vec![
+                            Rule::string("+"),
+                            Rule::string("-"),
                         ])]),
-                    ]),
+                        Rule::pattern("[0-9]+", ""),
+                    ])])]),
                 ])],
                 separators: vec![],
                 examples: vec![
