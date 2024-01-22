@@ -136,14 +136,15 @@ fn extract_choices(rule: Rule) -> Vec<Rule> {
 
                 for entry in result {
                     for extraction_entry in extraction.iter() {
-                        next_result.push(Rule {
-                            kind: RuleType::Seq(vec![entry.clone(), extraction_entry.clone()]),
-                            params: params.clone(),
-                        });
+                        next_result.push(Rule::seq(vec![entry.clone(), extraction_entry.clone()]));
                     }
                 }
 
                 result = next_result;
+            }
+
+            for element in result.iter_mut() {
+                element.params = params.clone();
             }
 
             result

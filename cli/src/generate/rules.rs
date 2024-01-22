@@ -108,57 +108,64 @@ impl From<&Rule> for Rule {
 }
 
 impl Rule {
-    pub fn field(name: String, mut rule: Rule) -> Self {
-        rule.params.field_name = Some(name);
-        rule
+    pub fn field(name: String, rule: Rule) -> Self {
+        rule.add_metadata(|params| {
+            params.field_name = Some(name);
+        })
     }
 
-    pub fn alias(mut rule: Rule, value: String, is_named: bool) -> Self {
-        rule.params.alias = Some(Alias { is_named, value });
-        rule
+    pub fn alias(rule: Rule, value: String, is_named: bool) -> Self {
+        rule.add_metadata(|params| {
+            params.alias = Some(Alias { is_named, value });
+        })
     }
 
-    pub fn token(mut rule: Rule) -> Self {
-        rule.params.is_token = true;
-        rule
+    pub fn token(rule: Rule) -> Self {
+        rule.add_metadata(|params| {
+            params.is_token = true;
+        })
     }
 
-    pub fn immediate_token(mut rule: Rule) -> Self {
-        rule.params.is_token = true;
-        rule.params.is_main_token = true;
-        rule.params.is_immediate = true;
-        rule
+    pub fn immediate_token(rule: Rule) -> Self {
+        rule.add_metadata(|params| {
+            params.is_token = true;
+            params.is_main_token = true;
+            params.is_immediate = true;
+        })
     }
 
-    pub fn immediate(mut rule: Rule) -> Self {
-        rule.params.is_immediate = true;
-        rule
+    pub fn immediate(rule: Rule) -> Self {
+        rule.add_metadata(|params| {
+            params.is_immediate = true;
+        })
     }
 
     pub fn is_immediate(&self) -> bool {
         self.params.is_immediate
     }
 
-    pub fn prec(value: Precedence, mut rule: Rule) -> Self {
-        rule.params.precedence = value;
-        rule
+    pub fn prec(value: Precedence, rule: Rule) -> Self {
+        rule.add_metadata(|params| {
+            params.precedence = value;
+        })
     }
 
-    pub fn prec_left(value: Precedence, mut rule: Rule) -> Self {
-        rule.params.associativity = Some(Associativity::Left);
-        rule.params.precedence = value;
-        rule
+    pub fn prec_left(value: Precedence, rule: Rule) -> Self {
+        rule.add_metadata(|params| {
+            params.associativity = Some(Associativity::Left);
+            params.precedence = value;
+        })
     }
 
-    pub fn prec_right(value: Precedence, mut rule: Rule) -> Self {
-        rule.params.associativity = Some(Associativity::Right);
-        rule.params.precedence = value;
-        rule
+    pub fn prec_right(value: Precedence, rule: Rule) -> Self {
+        rule.add_metadata(|params| {
+            params.associativity = Some(Associativity::Right);
+            params.precedence = value;
+        })
     }
 
-    pub fn prec_dynamic(value: i32, mut rule: Rule) -> Self {
-        rule.params.dynamic_precedence = value;
-        rule
+    pub fn prec_dynamic(value: i32, rule: Rule) -> Self {
+        rule.add_metadata(|params| params.dynamic_precedence = value)
     }
 
     pub fn blank() -> Self {
@@ -192,7 +199,7 @@ impl Rule {
         RuleType::Pattern(value.to_string(), flags.to_string()).into()
     }
 
-    pub fn repeat(mut rule: Rule) -> Self {
+    pub fn repeat(rule: Rule) -> Self {
         RuleType::Repeat(Box::new(rule)).into()
     }
 
@@ -208,6 +215,25 @@ impl Rule {
 
     pub fn seq(rules: Vec<Rule>) -> Self {
         RuleType::Seq(rules).into()
+    }
+
+    pub fn add_metadata<F: FnOnce(&mut MetadataParams)>(self, params_transform: F) -> Self {
+        // if this is a token rule, any metadata applications replace existing
+        // metadata
+        let mut params = if self.params.is_token {
+            MetadataParams::default()
+
+        // otherwise, more metadata is additive
+        } else {
+            self.params
+        };
+
+        params_transform(&mut params);
+
+        Rule {
+            kind: self.kind,
+            params,
+        }
     }
 }
 

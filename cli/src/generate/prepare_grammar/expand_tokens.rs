@@ -92,7 +92,9 @@ pub(crate) fn expand_tokens(mut grammar: ExtractedLexicalGrammar) -> Result<Lexi
         precedence_stack: vec![0],
     };
 
-    let separator_rule = if grammar.separators.len() > 0 {
+    println!("grammar: {:#?}", grammar);
+
+    let separator_rule = if !grammar.separators.is_empty() {
         grammar.separators.push(Rule::blank());
         Rule::repeat(Rule::choice(grammar.separators))
     } else {
@@ -100,6 +102,7 @@ pub(crate) fn expand_tokens(mut grammar: ExtractedLexicalGrammar) -> Result<Lexi
     };
 
     let mut variables = Vec::new();
+
     for (i, variable) in grammar.variables.into_iter().enumerate() {
         builder.is_sep = false;
         builder.nfa.states.push(NfaState::Accept {
@@ -170,7 +173,9 @@ impl NfaBuilder {
                 let mut alternative_state_ids = Vec::new();
                 for mut element in elements.into_iter() {
                     // let immediate rules trickle down to every choice
-                    element.params.is_immediate = is_immediate;
+                    element = element.add_metadata(|params| {
+                        params.is_immediate |= is_immediate;
+                    });
 
                     if self.expand_rule(element, next_state_id)? {
                         alternative_state_ids.push(self.nfa.last_state_id());
@@ -191,12 +196,15 @@ impl NfaBuilder {
             }
             RuleType::Seq(elements) => {
                 let mut result = false;
+                let num_elts = elements.len();
 
                 for (i, mut element) in elements.into_iter().rev().enumerate() {
                     // in a sequence, only the first child rule should inherit
                     // the immediacy of the parent
-                    if i == 0 {
-                        element.params.is_immediate = is_immediate;
+                    if i == num_elts - 1 {
+                        element = element.add_metadata(|params| {
+                            params.is_immediate = is_immediate;
+                        });
                     }
 
                     if self.expand_rule(element, next_state_id)? {
@@ -608,44 +616,57 @@ mod tests {
         let mut result_precedence = i32::MIN;
         let mut start_char = 0;
         let mut end_char = 0;
+
         for c in s.chars() {
+            println!("char: {}", c);
             for (id, precedence) in cursor.completions() {
+                println!("completion: {}, prec: {:?}", id, precedence);
                 if result.is_none() || result_precedence <= precedence {
                     result = Some((id, &s[start_char..end_char]));
                     result_precedence = precedence;
+                    println!("found result: {:?}, prec: {}", result, result_precedence);
                 }
             }
             if let Some(NfaTransition {
                 states,
                 is_separator,
                 ..
-            }) = cursor
-                .transitions()
-                .into_iter()
-                .find(|t| t.characters.contains(c) && t.precedence >= result_precedence)
-            {
+            }) = cursor.transitions().into_iter().find(|t| {
+                let found = t.characters.contains(c) && t.precedence >= result_precedence;
+                println!("transition: {:?}, matches: {}", t, found);
+                found
+            }) {
+                println!("transition found");
                 cursor.reset(states);
                 end_char += c.len_utf8();
                 if is_separator {
                     start_char = end_char;
                 }
             } else {
+                println!("no nfa transitions, breaking");
                 break;
             }
+
+            println!("current result: {:?}, prec: {}", result, result_precedence);
         }
 
         for (id, precedence) in cursor.completions() {
+            println!("completion: {}, prec: {:?}", id, precedence);
+
             if result.is_none() || result_precedence <= precedence {
                 result = Some((id, &s[start_char..end_char]));
                 result_precedence = precedence;
+                println!("found result: {:?}, prec: {}", result, result_precedence);
             }
         }
 
+        println!("final result: {:?}, prec: {}", result, result_precedence);
         result
     }
 
     #[test]
     fn test_rule_expansion() {
+        #[derive(Debug)]
         struct Row {
             rules: Vec<Rule>,
             separators: Vec<Rule>,
@@ -980,13 +1001,16 @@ mod tests {
             let grammar = expand_tokens(ExtractedLexicalGrammar {
                 separators: separators.clone(),
                 variables: rules
-                    .into_iter()
+                    .iter()
                     .map(|rule| Variable::named("", rule.clone()))
                     .collect(),
             })
             .unwrap();
 
-            for (haystack, needle) in examples.iter() {
+            println!("test grammar: {:#?}", grammar);
+
+            for example @ (haystack, needle) in examples.iter() {
+                println!("testing example example: {:?}", example);
                 assert_eq!(simulate_nfa(&grammar, haystack), *needle);
             }
         }

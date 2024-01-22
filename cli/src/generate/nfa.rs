@@ -524,12 +524,16 @@ impl<'a> NfaCursor<'a> {
 
     pub fn completions(&self) -> impl Iterator<Item = (usize, i32)> + '_ {
         self.state_ids.iter().filter_map(move |state_id| {
+            let nfa_state = &self.nfa.states[*state_id as usize];
+
+            println!("nfa state {}: {:?}", state_id, nfa_state);
+
             if let NfaState::Accept {
                 variable_index,
                 precedence,
-            } = self.nfa.states[*state_id as usize]
+            } = nfa_state
             {
-                Some((variable_index, precedence))
+                Some((*variable_index, *precedence))
             } else {
                 None
             }

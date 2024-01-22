@@ -23,14 +23,7 @@ pub(super) fn extract_tokens(
         extractor.extract_tokens_in_variable(variable);
     }
 
-    let mut lexical_variables = Vec::with_capacity(extractor.extracted_variables.len());
-    for variable in extractor.extracted_variables {
-        lexical_variables.push(Variable {
-            name: variable.name,
-            kind: variable.kind,
-            rule: variable.rule,
-        });
-    }
+    let mut lexical_variables = extractor.extracted_variables;
 
     // If a variable's entire rule was extracted as a token and that token didn't
     // appear within any other rule, then remove that variable from the syntax
