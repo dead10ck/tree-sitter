@@ -46,7 +46,7 @@ fn get_implicit_precedence(rule: &Rule) -> i32 {
         _ => 0,
     };
 
-    if rule.params.is_main_token {
+    if rule.is_main_token() {
         prec + 1
     } else {
         prec
@@ -54,8 +54,8 @@ fn get_implicit_precedence(rule: &Rule) -> i32 {
 }
 
 fn get_completion_precedence(rule: &Rule) -> i32 {
-    match rule.params.precedence {
-        Precedence::Integer(p) => p,
+    match rule.params.as_ref().map(|params| &params.precedence) {
+        Some(Precedence::Integer(p)) => *p,
         _ => 0,
     }
 }
@@ -149,12 +149,13 @@ impl NfaBuilder {
         let is_immediate = rule.is_immediate();
         let params = rule.params;
 
-        let has_precedence = if let Precedence::Integer(precedence) = params.precedence {
-            self.precedence_stack.push(precedence);
-            true
-        } else {
-            false
-        };
+        let has_precedence =
+            if let Some(Precedence::Integer(precedence)) = params.map(|params| params.precedence) {
+                self.precedence_stack.push(precedence);
+                true
+            } else {
+                false
+            };
 
         let result = match rule.kind {
             RuleType::Pattern(s, f) => {
@@ -616,57 +617,44 @@ mod tests {
         let mut result_precedence = i32::MIN;
         let mut start_char = 0;
         let mut end_char = 0;
-
         for c in s.chars() {
-            println!("char: {}", c);
             for (id, precedence) in cursor.completions() {
-                println!("completion: {}, prec: {:?}", id, precedence);
                 if result.is_none() || result_precedence <= precedence {
                     result = Some((id, &s[start_char..end_char]));
                     result_precedence = precedence;
-                    println!("found result: {:?}, prec: {}", result, result_precedence);
                 }
             }
             if let Some(NfaTransition {
                 states,
                 is_separator,
                 ..
-            }) = cursor.transitions().into_iter().find(|t| {
-                let found = t.characters.contains(c) && t.precedence >= result_precedence;
-                println!("transition: {:?}, matches: {}", t, found);
-                found
-            }) {
-                println!("transition found");
+            }) = cursor
+                .transitions()
+                .into_iter()
+                .find(|t| t.characters.contains(c) && t.precedence >= result_precedence)
+            {
                 cursor.reset(states);
                 end_char += c.len_utf8();
                 if is_separator {
                     start_char = end_char;
                 }
             } else {
-                println!("no nfa transitions, breaking");
                 break;
             }
-
-            println!("current result: {:?}, prec: {}", result, result_precedence);
         }
 
         for (id, precedence) in cursor.completions() {
-            println!("completion: {}, prec: {:?}", id, precedence);
-
             if result.is_none() || result_precedence <= precedence {
                 result = Some((id, &s[start_char..end_char]));
                 result_precedence = precedence;
-                println!("found result: {:?}, prec: {}", result, result_precedence);
             }
         }
 
-        println!("final result: {:?}, prec: {}", result, result_precedence);
         result
     }
 
     #[test]
     fn test_rule_expansion() {
-        #[derive(Debug)]
         struct Row {
             rules: Vec<Rule>,
             separators: Vec<Rule>,
@@ -817,17 +805,18 @@ mod tests {
             // nested choices within sequences
             Row {
                 rules: vec![Rule::seq(vec![
-                    Rule::blank(),
                     Rule::pattern("[0-9]+", ""),
-                    Rule::choice(vec![Rule::choice(vec![Rule::seq(vec![
+                    Rule::choice(vec![
                         Rule::blank(),
-                        Rule::choice(vec![Rule::string("e"), Rule::string("E")]),
-                        Rule::choice(vec![Rule::choice(vec![
-                            Rule::string("+"),
-                            Rule::string("-"),
+                        Rule::choice(vec![Rule::seq(vec![
+                            Rule::choice(vec![Rule::string("e"), Rule::string("E")]),
+                            Rule::choice(vec![
+                                Rule::blank(),
+                                Rule::choice(vec![Rule::string("+"), Rule::string("-")]),
+                            ]),
+                            Rule::pattern("[0-9]+", ""),
                         ])]),
-                        Rule::pattern("[0-9]+", ""),
-                    ])])]),
+                    ]),
                 ])],
                 separators: vec![],
                 examples: vec![
@@ -1001,16 +990,13 @@ mod tests {
             let grammar = expand_tokens(ExtractedLexicalGrammar {
                 separators: separators.clone(),
                 variables: rules
-                    .iter()
+                    .into_iter()
                     .map(|rule| Variable::named("", rule.clone()))
                     .collect(),
             })
             .unwrap();
 
-            println!("test grammar: {:#?}", grammar);
-
-            for example @ (haystack, needle) in examples.iter() {
-                println!("testing example example: {:?}", example);
+            for (haystack, needle) in examples.iter() {
                 assert_eq!(simulate_nfa(&grammar, haystack), *needle);
             }
         }

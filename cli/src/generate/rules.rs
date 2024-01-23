@@ -65,7 +65,7 @@ pub(crate) struct Symbol {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Rule {
     pub kind: RuleType,
-    pub params: MetadataParams,
+    pub params: Option<MetadataParams>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -94,10 +94,7 @@ pub(crate) struct TokenSet {
 
 impl From<RuleType> for Rule {
     fn from(kind: RuleType) -> Self {
-        Rule {
-            kind,
-            params: MetadataParams::default(),
-        }
+        Rule { kind, params: None }
     }
 }
 
@@ -126,12 +123,33 @@ impl Rule {
         })
     }
 
+    pub fn is_token(&self) -> bool {
+        self.params
+            .as_ref()
+            .map(|params| params.is_token)
+            .unwrap_or(false)
+    }
+
+    pub fn is_main_token(&self) -> bool {
+        self.params
+            .as_ref()
+            .map(|params| params.is_main_token)
+            .unwrap_or(false)
+    }
+
     pub fn immediate_token(rule: Rule) -> Self {
         rule.add_metadata(|params| {
             params.is_token = true;
             params.is_main_token = true;
             params.is_immediate = true;
         })
+    }
+
+    pub fn is_immediate_token(&self) -> bool {
+        self.params
+            .as_ref()
+            .map(|params| params.is_token && params.is_immediate)
+            .unwrap_or(false)
     }
 
     pub fn immediate(rule: Rule) -> Self {
@@ -141,7 +159,10 @@ impl Rule {
     }
 
     pub fn is_immediate(&self) -> bool {
-        self.params.is_immediate
+        self.params
+            .as_ref()
+            .map(|params| params.is_immediate)
+            .unwrap_or(false)
     }
 
     pub fn prec(value: Precedence, rule: Rule) -> Self {
@@ -220,19 +241,19 @@ impl Rule {
     pub fn add_metadata<F: FnOnce(&mut MetadataParams)>(self, params_transform: F) -> Self {
         // if this is a token rule, any metadata applications replace existing
         // metadata
-        let mut params = if self.params.is_token {
-            MetadataParams::default()
+        let mut params = match self.params {
+            Some(params) if params.is_token => MetadataParams::default(),
+            None => MetadataParams::default(),
 
-        // otherwise, more metadata is additive
-        } else {
-            self.params
+            // otherwise, more metadata is additive
+            Some(params) => params,
         };
 
         params_transform(&mut params);
 
         Rule {
             kind: self.kind,
-            params,
+            params: Some(params),
         }
     }
 }

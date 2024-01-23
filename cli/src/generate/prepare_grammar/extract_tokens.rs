@@ -184,7 +184,7 @@ impl TokenExtractor {
             println!("rule: {:?}", input);
         }
 
-        if input.params.is_token {
+        if input.is_token() {
             return self.extract_token(input).into();
         }
 
@@ -396,7 +396,10 @@ mod test {
                 Variable::auxiliary("rule_0_token1", Rule::pattern("b", "")),
                 Variable::auxiliary(
                     "rule_0_token2",
-                    Rule::repeat(Rule::choice(vec![Rule::string("c"), Rule::string("d"),]))
+                    Rule::token(Rule::repeat(Rule::choice(vec![
+                        Rule::string("c"),
+                        Rule::string("d"),
+                    ])))
                 ),
                 Variable::named("rule_1", Rule::pattern("e", "")),
             ]

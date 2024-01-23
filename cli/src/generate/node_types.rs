@@ -1100,12 +1100,16 @@ mod tests {
                 Variable {
                     name: "v2".to_string(),
                     kind: VariableType::Named,
-                    rule: Rule::alias(Rule::string("a"), "x".to_string(), true),
+                    rule: Rule::alias(
+                        Rule::seq(vec![Rule::string("a"), Rule::string("b")]),
+                        "x".to_string(),
+                        true,
+                    ),
                 },
                 Variable {
                     name: "v3".to_string(),
                     kind: VariableType::Named,
-                    rule: Rule::string("b"),
+                    rule: Rule::string("c"),
                 },
             ],
             ..Default::default()

@@ -34,33 +34,35 @@ impl RuleFlattener {
 
     fn apply(&mut self, rule: Rule, at_end: bool) -> bool {
         let params = rule.params;
-
         let mut has_precedence = false;
-        if !params.precedence.is_none() {
-            has_precedence = true;
-            self.precedence_stack.push(params.precedence);
-        }
-
         let mut has_associativity = false;
-        if let Some(associativity) = params.associativity {
-            has_associativity = true;
-            self.associativity_stack.push(associativity);
-        }
-
         let mut has_alias = false;
-        if let Some(alias) = params.alias {
-            has_alias = true;
-            self.alias_stack.push(alias);
-        }
-
         let mut has_field_name = false;
-        if let Some(field_name) = params.field_name {
-            has_field_name = true;
-            self.field_name_stack.push(field_name);
-        }
 
-        if params.dynamic_precedence.abs() > self.production.dynamic_precedence.abs() {
-            self.production.dynamic_precedence = params.dynamic_precedence;
+        if let Some(params) = params {
+            if !params.precedence.is_none() {
+                has_precedence = true;
+                self.precedence_stack.push(params.precedence);
+            }
+
+            if let Some(associativity) = params.associativity {
+                has_associativity = true;
+                self.associativity_stack.push(associativity);
+            }
+
+            if let Some(alias) = params.alias {
+                has_alias = true;
+                self.alias_stack.push(alias);
+            }
+
+            if let Some(field_name) = params.field_name {
+                has_field_name = true;
+                self.field_name_stack.push(field_name);
+            }
+
+            if params.dynamic_precedence.abs() > self.production.dynamic_precedence.abs() {
+                self.production.dynamic_precedence = params.dynamic_precedence;
+            }
         }
 
         let did_push = match rule.kind {
@@ -123,9 +125,8 @@ impl RuleFlattener {
 }
 
 fn extract_choices(rule: Rule) -> Vec<Rule> {
-    let params = rule.params;
+    let input_params = rule.params;
 
-    // each top-level rule should inherit the params
     match rule.kind {
         RuleType::Seq(elements) => {
             let mut result = vec![Rule::blank()];
@@ -143,25 +144,43 @@ fn extract_choices(rule: Rule) -> Vec<Rule> {
                 result = next_result;
             }
 
-            for element in result.iter_mut() {
-                element.params = params.clone();
-            }
-
+            // each top-level rule should inherit the params
             result
+                .into_iter()
+                .map(|elt| {
+                    if let Some(input_params) = &input_params {
+                        elt.add_metadata(|params| {
+                            *params = input_params.clone();
+                        })
+                    } else {
+                        elt
+                    }
+                })
+                .collect()
         }
         RuleType::Choice(elements) => {
             let mut result = Vec::new();
 
-            for element in elements {
-                for mut rule in extract_choices(element) {
-                    rule.params = params.clone();
+            for elt in elements {
+                for rule in extract_choices(elt) {
                     result.push(rule);
                 }
             }
 
             result
+                .into_iter()
+                .map(|elt| match &input_params {
+                    Some(input_params) if input_params.is_immediate => {
+                        elt.add_metadata(|params| params.is_immediate |= input_params.is_immediate)
+                    }
+                    _ => elt,
+                })
+                .collect()
         }
-        kind => vec![Rule { kind, params }],
+        kind => vec![Rule {
+            kind,
+            params: input_params,
+        }],
     }
 }
 

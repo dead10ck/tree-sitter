@@ -125,7 +125,7 @@ fn validate_precedences(grammar: &InputGrammar) -> Result<()> {
     // Check that no rule contains a named precedence that is not present in
     // any of the `precedences` lists.
     fn validate(rule_name: &str, rule: &Rule, names: &HashSet<&String>) -> Result<()> {
-        if let Precedence::Name(n) = &rule.params.precedence {
+        if let Some(Precedence::Name(n)) = rule.params.as_ref().map(|params| &params.precedence) {
             if !names.contains(n) {
                 return Err(anyhow!(
                     "Undeclared precedence '{}' in rule '{}'",
@@ -136,11 +136,10 @@ fn validate_precedences(grammar: &InputGrammar) -> Result<()> {
         }
 
         match &rule.kind {
-            RuleType::Repeat(rule) => validate(rule_name, &*rule, names),
+            RuleType::Repeat(rule) => validate(rule_name, rule, names),
             RuleType::Seq(elements) | RuleType::Choice(elements) => elements
                 .iter()
-                .map(|e| validate(rule_name, e, names))
-                .collect(),
+                .try_for_each(|e| validate(rule_name, e, names)),
             _ => Ok(()),
         }
     }
